@@ -86,6 +86,9 @@ class CocoConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 80  # COCO has 80 classes
 
+    # Number of training images to use (default is all available)
+    TRAIN_IMAGES_LIMIT = -1
+
 
 ############################################################
 #  Dataset
@@ -93,7 +96,7 @@ class CocoConfig(Config):
 
 class CocoDataset(utils.Dataset):
     def load_coco(self, dataset_dir, subset, year=DEFAULT_DATASET_YEAR, class_ids=None,
-                  class_map=None, return_coco=False, auto_download=False):
+                  class_map=None, return_coco=False, auto_download=False, limit_images=-1):
         """Load a subset of the COCO dataset.
         dataset_dir: The root directory of the COCO dataset.
         subset: What to load (train, val, minival, valminusminival)
@@ -103,6 +106,7 @@ class CocoDataset(utils.Dataset):
             different datasets to the same class ID.
         return_coco: If True, returns the COCO object.
         auto_download: Automatically download and unzip MS-COCO images and annotations
+        limit_images: If not -1, limits the number of images to load for the dataset.
         """
 
         if auto_download is True:
@@ -128,6 +132,10 @@ class CocoDataset(utils.Dataset):
         else:
             # All images
             image_ids = list(coco.imgs.keys())
+
+        # Apply image limit if specified
+        if limit_images != -1 and len(image_ids) > limit_images:
+            image_ids = np.random.choice(image_ids, limit_images, replace=False).tolist()
 
         # Add classes
         for i in class_ids:
@@ -428,6 +436,11 @@ if __name__ == '__main__':
                         metavar="<True|False>",
                         help='Automatically download and unzip MS-COCO files (default=False)',
                         type=bool)
+    parser.add_argument('--train_limit', required=False,
+                        default=-1,
+                        metavar="<image count>",
+                        help='Number of images to use for training (default=-1, all images)',
+                        type=int)
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
@@ -435,6 +448,7 @@ if __name__ == '__main__':
     print("Year: ", args.year)
     print("Logs: ", args.logs)
     print("Auto Download: ", args.download)
+    print("Train Limit: ", args.train_limit)
 
     # Configurations
     if args.command == "train":
@@ -478,9 +492,9 @@ if __name__ == '__main__':
         # Training dataset. Use the training set and 35K from the
         # validation set, as as in the Mask RCNN paper.
         dataset_train = CocoDataset()
-        dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download)
+        dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download, limit_images=args.train_limit)
         if args.year in '2014':
-            dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download)
+            dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download, limit_images=args.train_limit)
         dataset_train.prepare()
 
         # Validation dataset
@@ -499,7 +513,7 @@ if __name__ == '__main__':
         print("Training network heads")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=40,
+                    epochs=20, # Adjusted for total 100 epochs
                     layers='heads',
                     augmentation=augmentation)
 
@@ -508,7 +522,7 @@ if __name__ == '__main__':
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=120,
+                    epochs=30, # Adjusted for total 100 epochs
                     layers='4+',
                     augmentation=augmentation)
 
@@ -517,7 +531,7 @@ if __name__ == '__main__':
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 10,
-                    epochs=160,
+                    epochs=50, # Adjusted for total 100 epochs (20+30+50 = 100)
                     layers='all',
                     augmentation=augmentation)
 
