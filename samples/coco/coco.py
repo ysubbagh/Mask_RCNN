@@ -31,7 +31,12 @@ import os
 import sys
 import time
 import numpy as np
+import random
 import imgaug  # https://github.com/aleju/imgaug (pip3 install imgaug)
+
+# Set random seed for reproducibility
+np.random.seed(42)
+random.seed(42)
 
 # Download and install the Python COCO tools from https://github.com/waleedka/coco
 # That's a fork from the original https://github.com/pdollar/coco with a bug

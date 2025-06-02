@@ -2847,8 +2847,8 @@ def norm_boxes_graph(boxes, shape):
     h, w = tf.split(tf.cast(shape, tf.float32), 2)
     scale = tf.concat([h, w, h, w], axis=-1) - tf.constant(1.0)
     shift = tf.constant([0., 0., 1., 1.])
-    # Use tf.math.divide instead of tf.divide for better compatibility
-    return tf.math.divide_no_nan(boxes - shift, scale)
+    # Use a safer approach for division
+    return (boxes - shift) / (scale + tf.keras.backend.epsilon())
 
 
 def denorm_boxes_graph(boxes, shape):
