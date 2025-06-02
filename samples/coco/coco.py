@@ -38,7 +38,12 @@ import imgaug  # https://github.com/aleju/imgaug (pip3 install imgaug)
 # Set random seed for reproducibility
 np.random.seed(42)
 random.seed(42)
-tf.set_random_seed(42)  # For TensorFlow 1.x
+try:
+    # TensorFlow 2.x
+    tf.random.set_seed(42)
+except AttributeError:
+    # TensorFlow 1.x
+    tf.set_random_seed(42)
 
 # Download and install the Python COCO tools from https://github.com/waleedka/coco
 # That's a fork from the original https://github.com/pdollar/coco with a bug
