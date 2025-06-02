@@ -32,11 +32,13 @@ import sys
 import time
 import numpy as np
 import random
+import tensorflow as tf
 import imgaug  # https://github.com/aleju/imgaug (pip3 install imgaug)
 
 # Set random seed for reproducibility
 np.random.seed(42)
 random.seed(42)
+tf.set_random_seed(42)  # For TensorFlow 1.x
 
 # Download and install the Python COCO tools from https://github.com/waleedka/coco
 # That's a fork from the original https://github.com/pdollar/coco with a bug
@@ -494,19 +496,42 @@ if __name__ == '__main__':
 
     # Train or evaluate
     if args.command == "train":
-        # Training dataset. Use the training set and 35K from the
-        # validation set, as as in the Mask RCNN paper.
+        # Training dataset - limit to 5000 samples
+        train_limit = 5000 if args.train_limit == -1 else args.train_limit
+        print(f"Using {train_limit} images for training")
+        
         dataset_train = CocoDataset()
-        dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download, limit_images=args.train_limit)
-        if args.year in '2014':
-            dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download, limit_images=args.train_limit)
+        dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download, limit_images=train_limit)
         dataset_train.prepare()
 
-        # Validation dataset
+        # Validation dataset - first 625 samples
         dataset_val = CocoDataset()
         val_type = "val" if args.year in '2017' else "minival"
-        dataset_val.load_coco(args.dataset, val_type, year=args.year, auto_download=args.download)
+        
+        # Load validation dataset with 625 samples
+        val_limit = 625
+        print(f"Using first {val_limit} images for validation")
+        dataset_val.load_coco(args.dataset, val_type, year=args.year, auto_download=args.download, limit_images=val_limit)
         dataset_val.prepare()
+        
+        # Test dataset - second 625 samples (for evaluation after training)
+        dataset_test = CocoDataset()
+        test_limit = 625
+        print(f"Using second {test_limit} images for testing")
+        
+        # Get all validation image IDs
+        all_val_ids = list(COCO(f"{args.dataset}/annotations/instances_{val_type}{args.year}.json").imgs.keys())
+        # Sort them to ensure consistent ordering
+        all_val_ids.sort()
+        # Select the second batch of 625 images
+        test_image_ids = all_val_ids[val_limit:val_limit+test_limit]
+        
+        # Load the test dataset with specific image IDs
+        coco_test = COCO(f"{args.dataset}/annotations/instances_{val_type}{args.year}.json")
+        dataset_test.load_coco(args.dataset, val_type, year=args.year, auto_download=args.download)
+        # Filter to only include the selected test images
+        dataset_test.image_ids = [id for id in dataset_test.image_ids if dataset_test.image_info[id]["id"] in test_image_ids]
+        dataset_test.prepare()
 
         # Image Augmentation
         # Right/Left flip 50% of the time
@@ -539,15 +564,53 @@ if __name__ == '__main__':
                     epochs=50, # Adjusted for total 100 epochs (20+30+50 = 100)
                     layers='all',
                     augmentation=augmentation)
+                    
+        # Evaluate on test dataset after training
+        print("\n--- Evaluating on test dataset (second 625 validation images) ---\n")
+        
+        # Save the last weights
+        last_weights = model.find_last()
+        print(f"Saving final weights to {last_weights}")
+        
+        # Create a separate evaluation command to run after training
+        print("\nTo evaluate the model on test data, run:")
+        print(f"python3 coco.py evaluate --dataset={args.dataset} --model={last_weights} --limit=625 --year={args.year}")
 
     elif args.command == "evaluate":
-        # Validation dataset
-        dataset_val = CocoDataset()
-        val_type = "val" if args.year in '2017' else "minival"
-        coco = dataset_val.load_coco(args.dataset, val_type, year=args.year, return_coco=True, auto_download=args.download)
-        dataset_val.prepare()
-        print("Running COCO evaluation on {} images.".format(args.limit))
-        evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
+        # Determine if we should use the test dataset or create a new one
+        if args.limit == 625 and hasattr(locals(), 'dataset_test') and 'dataset_test' in locals():
+            # Use the test dataset we created during training
+            print("Using the test dataset (second 625 validation images)")
+            dataset_eval = dataset_test
+            coco_eval = coco_test
+        else:
+            # Create a new evaluation dataset
+            dataset_eval = CocoDataset()
+            val_type = "val" if args.year in '2017' else "minival"
+            
+            # If limit is 625, use the second 625 images from validation
+            if int(args.limit) == 625:
+                print("Creating test dataset with second 625 validation images")
+                # Get all validation image IDs
+                all_val_ids = list(COCO(f"{args.dataset}/annotations/instances_{val_type}{args.year}.json").imgs.keys())
+                # Sort them to ensure consistent ordering
+                all_val_ids.sort()
+                # Select the second batch of 625 images
+                test_image_ids = all_val_ids[625:1250]
+                
+                # Load the full validation dataset
+                coco_eval = COCO(f"{args.dataset}/annotations/instances_{val_type}{args.year}.json")
+                dataset_eval.load_coco(args.dataset, val_type, year=args.year, return_coco=False, auto_download=args.download)
+                # Filter to only include the selected test images
+                dataset_eval.image_ids = [id for id in dataset_eval.image_ids if dataset_eval.image_info[id]["id"] in test_image_ids]
+            else:
+                # Use the standard validation dataset with the specified limit
+                coco_eval = dataset_eval.load_coco(args.dataset, val_type, year=args.year, return_coco=True, auto_download=args.download)
+            
+            dataset_eval.prepare()
+        
+        print("Running COCO evaluation on {} images.".format(len(dataset_eval.image_ids)))
+        evaluate_coco(model, dataset_eval, coco_eval, "bbox")
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.command))
